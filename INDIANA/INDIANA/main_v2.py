@@ -18,12 +18,6 @@ parser.add_argument("--device", default="cuda:0", type=str, help="Which device d
 parser.add_argument("--lr", default=0.001, type=float, help="")
 parser.add_argument("--emb_dim", default=150, type=int, help="Embedding dimension dim")
 parser.add_argument("--batch_size", default=100, type=int, help="")
-
-# ---------------------------------------------------------------------------
-# Optional design choices (text-vs-code alignment knobs).
-# Defaults match the implementation used to produce the reported numbers.
-# Turning each flag ON yields the formulation written in the paper.
-# ---------------------------------------------------------------------------
 parser.add_argument("--neg_sampling", action="store_true",
                     help="Train with K negative samples per positive instead of a full softmax "
                          "over all POIs. Default: off (full softmax).")
