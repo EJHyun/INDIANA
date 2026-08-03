@@ -6,7 +6,9 @@ import torch.nn.functional as F
 
 class GCRNN(nn.Module):
     def __init__(self, user_num, comp_num, rel_num, emb_dim, user_id_max, cuda, num_layers=1,
-                 variant='indiana', att_window=5, poi_state='temporal', rnn_steps='active'):
+                 variant='indiana', att_window=5, poi_state='temporal', rnn_steps='active',
+                 rel_init='xavier', rnn_init='default', emb_std=0.0, gate_bias=1.0,
+                 fg_bias=None, in_bias=None, norm='mean', g_bias=0.0, poi_gate_bias=None):
         super(GCRNN, self).__init__()
         self.device0 = torch.device(cuda)
         print("Utilizing", self.device0)
@@ -18,6 +20,7 @@ class GCRNN(nn.Module):
         self.att_window = att_window
         self.poi_state = poi_state
         self.rnn_steps = rnn_steps
+        self.norm = norm
         self.use_relation = variant not in ('tg', 'baseline')
         self.use_rnn = variant not in ('kg', 'baseline', 'att')
         self.ent_embedding_layer = nn.Embedding(self.entity_num, emb_dim, sparse = False).to(self.device0)
@@ -39,6 +42,26 @@ class GCRNN(nn.Module):
         nn.init.xavier_normal_(self.rel_embedding_layer.weight.data)
         if variant == 'att':
             nn.init.xavier_normal_(self.learnable_query_layer.weight.data)
+        if rel_init == 'ones':
+            self.rel_embedding_layer.weight.data.fill_(1.0)
+        if emb_std > 0:
+            nn.init.normal_(self.ent_embedding_layer.weight.data, 0, emb_std)
+            nn.init.normal_(self.c0_embedding_layer_u.weight.data, 0, emb_std)
+        if rnn_init != 'default' and variant != 'gru':
+            for cell_ in (self.user_RNN, self.POI_RNN):
+                nn.init.zeros_(cell_.bias_ih)
+                nn.init.zeros_(cell_.bias_hh)
+                hs = cell_.hidden_size
+                cell_.bias_ih.data[0:hs] = gate_bias if in_bias is None else in_bias
+                cell_.bias_ih.data[hs:2*hs] = gate_bias if fg_bias is None else fg_bias
+                if rnn_init == 'identity':
+                    cell_.weight_ih.data[2*hs:3*hs] = torch.eye(hs)
+                if g_bias != 0.0:
+                    cell_.bias_ih.data[2*hs:3*hs] = g_bias
+            if poi_gate_bias is not None:
+                hs = self.POI_RNN.hidden_size
+                self.POI_RNN.bias_ih.data[0:hs] = poi_gate_bias
+                self.POI_RNN.bias_ih.data[hs:2*hs] = poi_gate_bias
 
     def msg_GCN(self, edges):
         m = edges.src['node_emb']
@@ -52,6 +75,8 @@ class GCRNN(nn.Module):
         if self.variant == 'gat':
             alpha = F.softmax(F.leaky_relu(nodes.mailbox['e'], 0.2), dim = 1)
             return {'node_emb2': (nodes.mailbox['m'] * alpha).sum(1)}
+        if self.norm == 'sqrt':
+            return {'node_emb2': nodes.mailbox['m'].sum(1) / nodes.mailbox['m'].shape[1] ** 0.5}
         return {'node_emb2': nodes.mailbox['m'].mean(1)}
 
     def _init_state(self, g):
@@ -66,7 +91,13 @@ class GCRNN(nn.Module):
         self.rel_embedding = self.rel_embedding_layer(self.rel_ids)
         su = su.to(self.device0)
         sv = sv.to(self.device0)
-        changed = node_ids if self.rnn_steps == 'all' else torch.unique(sv)
+        uniq = torch.unique(sv)
+        if self.rnn_steps == 'all':
+            changed = node_ids
+        elif self.rnn_steps == 'poi_all':
+            changed = torch.cat([uniq[uniq <= self.user_id_max], node_ids[self.user_id_max + 1:]])
+        else:
+            changed = uniq
         thresh = int((changed <= self.user_id_max).sum())
         prev_hn = node_emb[changed]
         prev_cn = cx[changed]
@@ -147,7 +178,17 @@ class GCRNN(nn.Module):
                 users, targets = probes_by_time[i]
                 scores = self._score(node_ids, node_emb, users)
                 gathered = scores.gather(1, targets.unsqueeze(1))
-                ranks.extend(((scores > gathered).sum(1) + 1).tolist())
+                base = (scores > gathered).sum(1)
+                by_user = {}
+                for j, u in enumerate(users):
+                    by_user.setdefault(u, []).append(j)
+                for js in by_user.values():
+                    if len(js) > 1:
+                        cols = torch.unique(targets[js])
+                        for j in js:
+                            v = gathered[j, 0]
+                            base[j] = int((scores[j] > v).sum()) - int((scores[j, cols] > v).sum())
+                ranks.extend((base + 1).tolist())
         return ranks
 
     def forward(self, user_batch, comp_batch, start_batch, g, splitted_g):
