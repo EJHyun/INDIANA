@@ -1,3 +1,4 @@
+import math
 import torch
 
 def binary_search(list_, key):
@@ -23,13 +24,14 @@ def print_hms(time):
     print("{:.1f}s".format(time))
 
 def inner_product_score(a, b):
-  return torch.sum(a * b, dim=-1) 
-# elementwise 곱 
+  return torch.sum(a * b, dim=-1)
 
 def hermitian_product_score(a, b):
   real_a, imaginary_a = torch.chunk(a, 2, dim=-1)
   real_b, imaginary_b = torch.chunk(b, 2, dim=-1)
   return torch.sum(real_a * real_b - imaginary_a * imaginary_b)
+
+METRIC_KEYS = ['MRR', 'Acc@1', 'Acc@5', 'Acc@10', 'NDCG@1', 'NDCG@5', 'NDCG@10']
 
 def MRR(ranks):
     sum_ = 0
@@ -42,19 +44,24 @@ def HitsK(ranks, k):
     for rank in ranks:
         if rank <= k:
             sum_+=1
-    return (sum_/len(ranks))*100
+    return sum_/len(ranks)
+
+def NDCGK(ranks, k):
+    sum_ = 0
+    for rank in ranks:
+        if rank <= k:
+            sum_+= 1/math.log2(rank+1)
+    return sum_/len(ranks)
 
 def eval_rank(ranks):
-    return MRR(ranks), HitsK(ranks,1), HitsK(ranks,3), HitsK(ranks,5), HitsK(ranks,10)
+    return {'MRR': MRR(ranks),
+            'Acc@1': HitsK(ranks, 1), 'Acc@5': HitsK(ranks, 5), 'Acc@10': HitsK(ranks, 10),
+            'NDCG@1': NDCGK(ranks, 1), 'NDCG@5': NDCGK(ranks, 5), 'NDCG@10': NDCGK(ranks, 10)}
 
 def print_metrics(comp_ranks, job_ranks):
-    mrr, h1, h3, h5, h10 = eval_rank(comp_ranks)
-    # mrr_, h1_, h3_, h5_, h10_ = eval_rank(job_ranks)
-    print('POI_prediction: MRR',round(mrr,4),'Hits@1', round(h1,4),'Hits@3', round(h3,4),'Hits@5', round(h5,4),'Hits@10', round(h10,4))
-    # print('job_prediction: MRR',round(mrr_,4),'Hits@1', round(h1_,4),'Hits@3', round(h3_,4),'Hits@5', round(h5_,4),'Hits@10', round(h10_,4))
-    # print('average:         MRR',round((mrr+mrr_)/2,4),'Hits@1', round((h1+h1_)/2,4),'Hits@3', round((h3+h3_)/2,4),'Hits@5', round((h5+h5_)/2,4),'Hits@10', round((h10+h10_)/2,4))
-    # return round((mrr+mrr_)/2,4), round((h1+h1_)/2,4), round((h3+h3_)/2,4), round((h5+h5_)/2,4),round((h10+h10_)/2,4)
-    return mrr, h1, h3, h5, h10
+    metrics = eval_rank(comp_ranks)
+    print('POI_prediction: ' + '  '.join('{} {:.4f}'.format(k, metrics[k]) for k in METRIC_KEYS))
+    return metrics
 
 def stabilized_log_softmax(pos, neg):
     return pos - torch.logsumexp(torch.cat([neg,pos.unsqueeze(1)],1), 1)
@@ -63,8 +70,7 @@ def stabilized_NLL(positive, negative):
     return -(torch.sum(stabilized_log_softmax(positive, negative)))
 
 def rank(list_, key):
-    try: 
+    try:
         return len(list_) - list_.index(key)
-    except: 
+    except:
         return len(list_) - binary_search(list_,key) + 1
-

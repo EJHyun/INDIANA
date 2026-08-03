@@ -35,6 +35,7 @@ nyc_df['UTCTimestamp'] = nyc_df['UTCTimestamp'].apply(parse_timestamp)
 nyc_df = nyc_df.dropna(subset=['UTCTimestamp'])
 # Convert UTC to Local Time: NYC is UTC-5
 nyc_df['LocalTimestamp'] = nyc_df['UTCTimestamp'] - timedelta(hours=5)
+nyc_df['UserID'] = 'NYC_' + nyc_df['UserID'].astype(str)
 print(f"   Loaded {len(nyc_df):,} NYC records")
 
 print("\n[1.2] Loading TKY data and converting UTC to Local Time (UTC+9)...")
@@ -45,6 +46,7 @@ tky_df['UTCTimestamp'] = tky_df['UTCTimestamp'].apply(parse_timestamp)
 tky_df = tky_df.dropna(subset=['UTCTimestamp'])
 # Convert UTC to Local Time: TKY is UTC+9
 tky_df['LocalTimestamp'] = tky_df['UTCTimestamp'] + timedelta(hours=9)
+tky_df['UserID'] = 'TKY_' + tky_df['UserID'].astype(str)
 print(f"   Loaded {len(tky_df):,} TKY records")
 
 # Step 1.2: Concatenate & Extract Hour
@@ -299,7 +301,7 @@ if RUN_EXP2:
             fig, ax = plt.subplots(figsize=(14, 8))
             max_prob_value = 0.0
             sns.heatmap(prob_df, annot=False, cmap='YlOrRd', vmin=0, vmax=1,
-                        cbar_kws={'label': 'Transition Probability P(Target|Hour)'}, ax=ax, linewidths=0.5)
+                        cbar_kws={'label': 'Lift value'}, ax=ax, linewidths=0.5)
             ax.set_title(f'Experiment 2: {actual_source_name} → Target Transitions by Local Hour\n(P(Target | Hour)) - Top 10 by Lift', 
                          fontsize=14, fontweight='bold')
             ax.set_xlabel('Local Hour (0-23)', fontsize=12)
@@ -407,24 +409,26 @@ if RUN_EXP4:
     print(f"\n[5.1] Created output folder: {final_folder}/")
 
     def calculate_conditional_probability_by_hour(df_transitions, source, target, hour):
-        """
-        Calculate Conditional Probability: P(Next=target | Current=source, Hour=hour)
-        Formula: P(Next=c | Current=source, Hour=h) = Count(Next=c ∩ Current=source ∩ Hour=h) / Count(Current=source ∩ Hour=h)
-        """
-        # Get source transitions at this hour
-        source_at_hour = df_transitions[(df_transitions['source'] == source) & 
-                                        (df_transitions['hour'] == hour)]
+        at_hour = df_transitions[df_transitions['hour'] == hour]
+        total_at_hour = len(at_hour)
+
+        if total_at_hour == 0:
+            return np.nan
+
+        source_at_hour = at_hour[at_hour['source'] == source]
         s_total_at_hour = len(source_at_hour)
-        
+
         if s_total_at_hour == 0:
             return np.nan
-        
-        # Count S -> T at this hour
-        s_to_t_at_hour = len(source_at_hour[source_at_hour['target'] == target])
-        
-        # P(T|S, H) = Count(S -> T at H) / Count(S -> Any at H)
-        conditional_prob = s_to_t_at_hour / s_total_at_hour
-        return conditional_prob
+
+        p_t_given_s_h = len(source_at_hour[source_at_hour['target'] == target]) / s_total_at_hour
+
+        p_t_given_h = len(at_hour[at_hour['target'] == target]) / total_at_hour
+
+        if p_t_given_h == 0:
+            return np.nan
+
+        return p_t_given_s_h / p_t_given_h
 
     def analyze_temporal_conditional_prob_linechart(df_transitions, source_name, targets_list, alternatives=None, output_folder='final', target_color_map=None):
         """
@@ -500,12 +504,12 @@ if RUN_EXP4:
                 max_prob_value = max(max_prob_value, prob_smoothed.max())
             
             ax.set_xlabel('(Hour)', fontsize=12)
-            ax.set_ylabel('Conditional Probability', fontsize=12)
+            ax.set_ylabel('Lift value', fontsize=12)
             ax.set_title(f'Experiment 4: {actual_source_name} → Target Conditional Probability by Hour\n(P(Next=Target | Current={actual_source_name}, Hour)) - Exp1 Targets', 
                          fontsize=14, fontweight='bold')
             ax.set_xlim(-0.5, 23.5)
             # y-axis upper bound: (max prob + 0.1), capped at 1.0 for readability
-            y_upper = min(1.0, (max_prob_value if not np.isnan(max_prob_value) else 0) + 0.1)
+            y_upper = (max_prob_value if not np.isnan(max_prob_value) else 0) + 1.0
             ax.set_ylim(0, y_upper if y_upper > 0 else 0.1)
             ax.set_xticks(hours)
             ax.grid(True, alpha=0.3)
@@ -540,13 +544,13 @@ if RUN_EXP4:
                 ax.plot(hours, [0] * 24, marker='o', label=target, 
                        color=target_color, linewidth=2, markersize=4)
             
-            ax.set_xlabel('시간 (Hour)', fontsize=12)
-            ax.set_ylabel('Conditional Probability', fontsize=12)
+            ax.set_xlabel('(Hour)', fontsize=12)
+            ax.set_ylabel('Lift value', fontsize=12)
             ax.set_title(f'Experiment 4: {actual_source_name} → Target Conditional Probability by Hour\n(P(Next=Target | Current={actual_source_name}, Hour)) - NO DATA - Exp1 Targets', 
                          fontsize=14, fontweight='bold')
             ax.set_xlim(-0.5, 23.5)
             # y-axis upper bound: (max prob + 0.1), capped at 1.0 for readability
-            y_upper = min(1.0, (max_prob_value if not np.isnan(max_prob_value) else 0) + 0.1)
+            y_upper = (max_prob_value if not np.isnan(max_prob_value) else 0) + 1.0
             ax.set_ylim(0, y_upper if y_upper > 0 else 0.1)
             ax.set_xticks(hours)
             ax.grid(True, alpha=0.3)

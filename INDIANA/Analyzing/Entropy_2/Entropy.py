@@ -99,6 +99,17 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df[["user_id", "poi_id", "category_id", "timestamp", "latitude", "longitude"]]
 
 
+TZ_OFFSET_HOURS = {"NYC": -5, "TKY": 9}
+
+
+def dataset_tag(file_path: str) -> str:
+    name = os.path.basename(file_path).upper()
+    for tag in TZ_OFFSET_HOURS:
+        if tag in name:
+            return tag
+    return os.path.splitext(os.path.basename(file_path))[0]
+
+
 def load_one_file(file_path: str) -> pd.DataFrame:
     sep, has_header = detect_separator_and_header(file_path)
     df = pd.read_csv(
@@ -111,6 +122,12 @@ def load_one_file(file_path: str) -> pd.DataFrame:
         # Temporarily name generic columns
         df.columns = [f"col_{i}" for i in range(df.shape[1])]
     df = normalize_columns(df)
+    tag = dataset_tag(file_path)
+    df["user_id"] = tag + "_" + df["user_id"].astype(str)
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
+    df = df.dropna(subset=["timestamp"])
+    df["timestamp"] = df["timestamp"] + pd.Timedelta(hours=TZ_OFFSET_HOURS.get(tag, 0))
+    print(f"  {tag}: {len(df)} rows, local-time offset {TZ_OFFSET_HOURS.get(tag, 0):+d}h")
     return df
 
 
@@ -164,9 +181,6 @@ def entropy_from_counts(counts: np.ndarray) -> float:
 # -----------------------
 
 def compute_entropies(df: pd.DataFrame, min_checkins: int = 10):
-    # Parse timestamp and extract hour-of-day
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-    df = df.dropna(subset=["timestamp"])
     df["hour"] = df["timestamp"].dt.hour
     # Sort by user and time to make shift(1) represent the previous check-in
     df = df.sort_values(["user_id", "timestamp"]).reset_index(drop=True)
