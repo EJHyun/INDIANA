@@ -8,35 +8,19 @@ import numpy as np
 import pandas as pd
 
 
-
 def detect_separator_and_header(file_path: str, possible_seps=(",", "\t", ";", "|")) -> Tuple[str, bool]:
-    """
-    Try to detect separator and whether the file has a header row.
-    Returns (sep, has_header).
-    """
     for sep in possible_seps:
         try:
-            # Try with header
             df_head = pd.read_csv(file_path, sep=sep, nrows=5, engine="python")
             if df_head.shape[1] >= 4:
-                # Heuristic: if all column names are generic integers, assume no header
                 has_header = not all(isinstance(c, int) for c in df_head.columns)
                 return sep, has_header
         except Exception:
             continue
-    # Fallback
     return ",", True
 
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Normalize column names to a standard set:
-    user_id, poi_id, category_id, timestamp, latitude, longitude
-    
-    Handles both 6-column and 8-column formats:
-    - 6 columns: user_id, poi_id, category_id, timestamp, latitude, longitude
-    - 8 columns: user_id, poi_id, category_id, category_name, latitude, longitude, timezone, timestamp
-    """
     col_map: Dict[str, str] = {}
     lower_cols = {c.lower(): c for c in df.columns}
 
@@ -53,18 +37,14 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     lat_col = pick(["lat", "latitude"])
     lon_col = pick(["lon", "lng", "longitude", "long"])
 
-    # Handle 8-column format (TSMC dataset): user, poi, category_id, category_name, lat, lon, timezone, timestamp
     if len(df.columns) == 8:
         cols = list(df.columns)
         user_col = user_col or cols[0]
         poi_col = poi_col or cols[1]
         cat_col = cat_col or cols[2]
-        # Skip cols[3] (category_name)
         lat_col = lat_col or cols[4]
         lon_col = lon_col or cols[5]
-        # Skip cols[6] (timezone)
         time_col = time_col or cols[7]
-    # Handle 6-column format
     elif len(df.columns) == 6:
         cols = list(df.columns)
         user_col = user_col or cols[0]
@@ -119,7 +99,6 @@ def load_one_file(file_path: str) -> pd.DataFrame:
         engine="python"
     )
     if not has_header:
-        # Temporarily name generic columns
         df.columns = [f"col_{i}" for i in range(df.shape[1])]
     df = normalize_columns(df)
     tag = dataset_tag(file_path)
@@ -137,7 +116,6 @@ def load_all_data(folder: str) -> pd.DataFrame:
     for pat in patterns:
         files.extend(glob.glob(os.path.join(folder, pat)))
     
-    # Exclude Python script files
     files = [f for f in files if not f.endswith('.py')]
     
     if not files:
@@ -157,14 +135,7 @@ def load_all_data(folder: str) -> pd.DataFrame:
     return all_df
 
 
-# -----------------------
-# Entropy Utilities
-# -----------------------
-
 def entropy_from_counts(counts: np.ndarray) -> float:
-    """
-    Shannon entropy (bits) from counts.
-    """
     counts = counts.astype(float)
     total = counts.sum()
     if total <= 0:
@@ -176,23 +147,15 @@ def entropy_from_counts(counts: np.ndarray) -> float:
     return float(-(p * np.log2(p)).sum())
 
 
-# -----------------------
-# Main Analysis
-# -----------------------
-
 def compute_entropies(df: pd.DataFrame, min_checkins: int = 10):
     df["hour"] = df["timestamp"].dt.hour
-    # Sort by user and time to make shift(1) represent the previous check-in
     df = df.sort_values(["user_id", "timestamp"]).reset_index(drop=True)
 
-    # Past feature creation (t-1 context)
     df["prev_category"] = df.groupby("user_id")["category_id"].shift(1)
     df["prev_hour"] = df.groupby("user_id")["hour"].shift(1)
 
-    # Remove first check-in per user (no past context)
     df = df.dropna(subset=["prev_category", "prev_hour"])
 
-    # Filter users with enough check-ins
     user_counts = df.groupby("user_id").size()
     valid_users = user_counts[user_counts >= min_checkins].index
     df = df[df["user_id"].isin(valid_users)].copy()
@@ -202,7 +165,6 @@ def compute_entropies(df: pd.DataFrame, min_checkins: int = 10):
     print(f"Total check-ins after filtering: {len(df)}")
     print(f"Number of users with >= {min_checkins} check-ins: {df['user_id'].nunique()}")
 
-    # Baseline: H(Y | u)
     baseline_entropies = []
     for u, g in df.groupby("user_id"):
         poi_counts = g.groupby("poi_id").size().values
@@ -210,7 +172,6 @@ def compute_entropies(df: pd.DataFrame, min_checkins: int = 10):
         baseline_entropies.append(h)
     baseline_entropy = float(np.mean(baseline_entropies))
 
-    # Category context: H(Y | u, C)
     cat_entropies = []
     for u, g in df.groupby("user_id"):
         total_u = len(g)
@@ -223,7 +184,6 @@ def compute_entropies(df: pd.DataFrame, min_checkins: int = 10):
         cat_entropies.append(h_u_c)
     cat_context_entropy = float(np.mean(cat_entropies))
 
-    # Joint context (Category + Time): H(Y | u, C, T)
     joint_entropies = []
     for u, g in df.groupby("user_id"):
         total_u = len(g)
@@ -241,7 +201,6 @@ def compute_entropies(df: pd.DataFrame, min_checkins: int = 10):
 
 def print_results(baseline: float, cat_ctx: float, joint_ctx: float):
     def search_space(h: float) -> float:
-        # Equivalent search space size: 2^H
         return float(2 ** h)
 
     baseline_ss = search_space(baseline)

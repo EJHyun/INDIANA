@@ -14,7 +14,7 @@ parser.add_argument("--dataset", default="NYC", type=str, help="NYC, TKY or CA")
 parser.add_argument("--data_dir", default=".", type=str, help="directory holding the preprocessed pickles and .TKG")
 parser.add_argument("--device", default="cuda:0", type=str, help="Which device do you wanna use")
 parser.add_argument("--lr", default=0.001, type=float, help="")
-parser.add_argument("--emb_dim", default=300, type=int, help="Embedding dimension dim")
+parser.add_argument("--emb_dim", default=0, type=int, help="Embedding dimension dim, 0 selects the value reported in the paper: 100 for NYC, 150 for TKY and CA")
 parser.add_argument("--num_layers", default=2, type=int, help="J, the number of KGNN layers")
 parser.add_argument("--bptt", default=200, type=int, help="snapshots between optimizer steps")
 parser.add_argument("--epochs", default=300, type=int, help="")
@@ -46,7 +46,7 @@ parser.add_argument("--variant", default="indiana", type=str,
 args = parser.parse_args()
 
 dataset = args.dataset
-emb_dim = args.emb_dim
+emb_dim = args.emb_dim if args.emb_dim > 0 else (100 if dataset == "NYC" else 150)
 best = {k: 0 for k in METRIC_KEYS}
 best_epoch = 0
 random.seed(args.seed)
